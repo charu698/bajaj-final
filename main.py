@@ -15,6 +15,16 @@ load_dotenv()
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 
 app = FastAPI()
+@app.get("/")
+async def root():
+    return {
+        "message": "Insurance AI Analyzer API is running!",
+        "status": "healthy",
+        "endpoints": {
+            "main_api": "/api/v1/hackrx/run",
+            "method": "POST"
+        }
+    }
 
 # CORS config
 app.add_middleware(
@@ -133,3 +143,10 @@ Relevant Clauses:
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+    # Add this at the very end of your main.py file
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# For Vercel deployment
+app = app  # This line helps Vercel find your app
