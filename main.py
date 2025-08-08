@@ -4,17 +4,27 @@ from pydantic import BaseModel
 from typing import List
 import os, json, traceback, requests, re
 from dotenv import load_dotenv
-
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # Load environment
 load_dotenv()
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN", "")  # Optional: for better rate limits
 
 app = FastAPI()
+
+# CORS config
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+# Root endpoint for health check
 @app.get("/")
 async def root():
     return {
@@ -26,23 +36,27 @@ async def root():
         }
     }
 
-# CORS config
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Or ["http://localhost:10000"]
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
-
-# Embedding model
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+# Function to get embeddings from HuggingFace API
+def get_embeddings(text: str):
+    headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"} if HUGGINGFACE_TOKEN else {}
+    
+    response = requests.post(
+        "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
+        headers=headers,
+        json={"inputs": text, "options": {"wait_for_model": True}},
+        timeout=30
+    )
+    
+    if response.status_code == 200:
+        return np.array(response.json())
+    else:
+        # Fallback: simple text matching if HF API fails
+        return None
 
 # Request body model
 class RunInput(BaseModel):
     documents: str  # URL to the PDF
     questions: List[str]
-
 
 @app.post("/api/v1/hackrx/run")
 async def run_hackrx(data: RunInput):
@@ -62,18 +76,33 @@ async def run_hackrx(data: RunInput):
 
         # Embed entire question block
         query_text = " ".join(data.questions)
-        query_emb = embedding_model.encode(query_text)
+        query_emb = get_embeddings(query_text)
 
-        # Score each chunk using cosine similarity
-        scored = []
-        for chunk in chunks:
-            content = chunk.page_content
-            emb = embedding_model.encode(content)
-            score = 1 - np.dot(query_emb, emb) / (np.linalg.norm(query_emb) * np.linalg.norm(emb))
-            scored.append((1 - score, content))  # higher is better
+        if query_emb is not None:
+            # Score each chunk using cosine similarity
+            scored = []
+            for chunk in chunks:
+                content = chunk.page_content
+                emb = get_embeddings(content)
+                if emb is not None:
+                    # Normalize embeddings
+                    query_norm = query_emb / np.linalg.norm(query_emb)
+                    emb_norm = emb / np.linalg.norm(emb)
+                    score = np.dot(query_norm, emb_norm)
+                    scored.append((score, content))
 
-        # Take top 5 relevant chunks
-        top_chunks = sorted(scored, reverse=True)[:5]
+            # Take top 5 relevant chunks
+            top_chunks = sorted(scored, reverse=True)[:5] if scored else [(1.0, chunk.page_content) for chunk in chunks[:5]]
+        else:
+            # Fallback: use simple keyword matching
+            query_words = set(query_text.lower().split())
+            scored = []
+            for chunk in chunks:
+                content = chunk.page_content.lower()
+                score = sum(1 for word in query_words if word in content)
+                scored.append((score, chunk.page_content))
+            top_chunks = sorted(scored, reverse=True)[:5]
+
         context = "\n\n".join(chunk for _, chunk in top_chunks)
 
         # === ORIGINAL PROMPT PRESERVED ===
@@ -143,10 +172,7 @@ Relevant Clauses:
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
-    # Add this at the very end of your main.py file
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-# For Vercel deployment
-app = app  # This line helps Vercel find your app
