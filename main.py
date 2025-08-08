@@ -167,7 +167,8 @@ Relevant Clauses:
             raise ValueError(f"No valid JSON answers found. LLM response:\n\n{reply}")
         structured = json.loads(match.group())
 
-        return {"response": structured}
+        return structured
+
 
     except Exception as e:
         traceback.print_exc()
