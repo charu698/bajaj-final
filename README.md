@@ -46,9 +46,9 @@ pip install -r requirements.txt
 
 Set up environment variables in a .env file:
 
-TOGETHER_API_KEY=your_api_key
-PINECONE_API_KEY=your_pinecone_key
-POSTGRES_URI=your_postgres_connection
+TOGETHER_API_KEY=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
+
+PINECONE_API_KEY=pcsk_9WA6p_DXRCfJKPY1Cbw4FfYnH6P2Bj2yf7KFDTnBGoE6bpmXDwxTY6XbxKwRnRRmVVMSc
 
 
 Run the backend:
